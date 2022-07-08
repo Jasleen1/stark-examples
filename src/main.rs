@@ -9,6 +9,7 @@ use winterfell::{
 // CONSTANTS
 // ================================================================================================
 
+// Defines the number of registers for this code.
 const TRACE_WIDTH: usize = 2;
 
 // MAIN FUNCTION
@@ -33,31 +34,44 @@ pub fn main() {
         64,
     );
 
+    
     // instantiate the prover
     let prover = FibProver::new(stark_params);
 
+    
     // build execution trace
     let now = Instant::now();
     let trace = prover.build_trace(n);
     println!("Built execution trace in {} ms", now.elapsed().as_millis());
     assert_eq!(result, trace.get(1, n / 2 - 1));
 
+    
+    
     // generate the proof
     let now = Instant::now();
     let proof = prover.prove(trace).unwrap();
     println!("Generated proof in {} ms", now.elapsed().as_millis());
 
+    
+    
+    
     // serialize proof and check security level
     let proof_bytes = proof.to_bytes();
     println!("Proof size: {:.1} KB", proof_bytes.len() as f64 / 1024f64);
     println!("Proof security: {} bits", proof.security_level(true));
 
+    
+    
     // deserialize proof
     let parsed_proof = StarkProof::from_bytes(&proof_bytes).unwrap();
     assert_eq!(proof, parsed_proof);
 
+    
+    
     // initialize public inputs
     let pub_inputs = compute_fib_term(n);
+
+
 
     // verify the proof
     let now = Instant::now();
@@ -70,26 +84,12 @@ pub fn main() {
     }
 }
 
-// PUBLIC INPUTS
-// ================================================================================================
-
-#[derive(Clone)]
-struct VdfInputs {
-    seed: Felt,
-    result: Felt,
-}
-
-impl Serializable for VdfInputs {
-    fn write_into<W: ByteWriter>(&self, target: &mut W) {
-        target.write(self.seed);
-        target.write(self.result);
-    }
-}
 
 // Fibonacci AIR
 // ================================================================================================
 
 pub struct FibAir {
+    // The context will be needed by the Air trait
     context: AirContext<Felt>,
     result: Felt,
 }
@@ -101,6 +101,8 @@ impl Air for FibAir {
     // CONSTRUCTOR
     // --------------------------------------------------------------------------------------------
     fn new(trace_info: TraceInfo, pub_inputs: Self::BaseField, options: ProofOptions) -> Self {
+        // There are two transition constraints, each only has addition, so degree is 1.
+        // Write these in the order in which the transitions will be defined later.
         let degrees = vec![
             TransitionConstraintDegree::new(1),
             TransitionConstraintDegree::new(1),
@@ -116,12 +118,14 @@ impl Air for FibAir {
         &self.context
     }
 
+    // These are the transition constriants
     fn evaluate_transition<E: FieldElement<BaseField = Self::BaseField> + From<Self::BaseField>>(
         &self,
         frame: &EvaluationFrame<E>,
         _periodic_values: &[E],
         result: &mut [E],
     ) {
+        // The frame refers to two consecutive "rows"
         let current = frame.current();
         let next = frame.next();
         // expected state width is 2 field elements
@@ -129,12 +133,12 @@ impl Air for FibAir {
         debug_assert_eq!(TRACE_WIDTH, next.len());
 
         // constraints of Fibonacci sequence (2 terms per step):
-        // s_{0, i+1} = s_{0, i} + s_{1, i}
-        // s_{1, i+1} = s_{1, i} + s_{0, i+1}
-        result[0] = next[0] - (current[0] + current[1]);
-        result[1] = next[1] - (current[1] + next[0]);
+        // register_{0, i+1} = register_{0, i} + register_{1, i}
+        // register_{1, i+1} = register_{1, i} + register_{0, i+1}
+        unimplemented!()
     }
 
+    // These are the boundary constraints
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
         // a valid Fibonacci sequence should start with two ones and terminate with
         // the expected result
@@ -173,12 +177,12 @@ impl FibProver {
         let mut trace = TraceTable::new(TRACE_WIDTH, sequence_length / 2);
         trace.fill(
             |state| {
-                state[0] = Felt::ONE;
-                state[1] = Felt::ONE;
+                // todo 
+                unimplemented!()
             },
             |_, state| {
-                state[0] += state[1];
-                state[1] += state[0];
+                // todo 
+                unimplemented!()
             },
         );
 
@@ -204,6 +208,7 @@ impl Prover for FibProver {
 /// HELPERS
 
 /// Computes the nth term of the fibonacci sequence.
+/// This is the program we want to implement, using two registers
 pub fn compute_fib_term(n: usize) -> Felt {
     let mut t0 = Felt::ONE;
     let mut t1 = Felt::ONE;
