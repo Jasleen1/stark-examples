@@ -70,22 +70,6 @@ pub fn main() {
     }
 }
 
-// PUBLIC INPUTS
-// ================================================================================================
-
-#[derive(Clone)]
-struct VdfInputs {
-    seed: Felt,
-    result: Felt,
-}
-
-impl Serializable for VdfInputs {
-    fn write_into<W: ByteWriter>(&self, target: &mut W) {
-        target.write(self.seed);
-        target.write(self.result);
-    }
-}
-
 // Fibonacci AIR
 // ================================================================================================
 
