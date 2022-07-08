@@ -1,6 +1,3 @@
-# STARK VDF
-A toy implementation of a verifiable delay function (VDF) using STARKs.
-
 # STARK Fibonacci
 
 A standalone implementation of the Fibonacci AIR example from here: https://github.com/novifinancial/winterfell/tree/main/examples/src/fibonacci
