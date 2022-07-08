@@ -9,20 +9,17 @@ use winterfell::{
 // CONSTANTS
 // ================================================================================================
 
-const ALPHA: u64 = 3;
-const INV_ALPHA: u128 = 226854911280625642308916371969163307691;
-const FORTY_TWO: Felt = Felt::new(42);
+const TRACE_WIDTH: usize = 2;
 
 // MAIN FUNCTION
 // ================================================================================================
 
 pub fn main() {
-    let n = 1024 * 1024;
-    let seed = Felt::new(5);
+    let n = 128;
 
     // compute result
     let now = Instant::now();
-    let result = vdf(seed, n);
+    let result = compute_fib_term(n);
     println!("Computed result in {} ms", now.elapsed().as_millis());
 
     // specify parameters for the STARK protocol
@@ -37,13 +34,13 @@ pub fn main() {
     );
 
     // instantiate the prover
-    let prover = VdfProver::new(stark_params);
+    let prover = FibProver::new(stark_params);
 
     // build execution trace
     let now = Instant::now();
-    let trace = VdfProver::build_trace(seed, n);
+    let trace = prover.build_trace(n);
     println!("Built execution trace in {} ms", now.elapsed().as_millis());
-    assert_eq!(result, trace.get(0, n - 1));
+    assert_eq!(result, trace.get(1, n / 2 - 1));
 
     // generate the proof
     let now = Instant::now();
@@ -60,28 +57,17 @@ pub fn main() {
     assert_eq!(proof, parsed_proof);
 
     // initialize public inputs
-    let pub_inputs = VdfInputs { seed, result };
+    let pub_inputs = compute_fib_term(n);
 
     // verify the proof
     let now = Instant::now();
-    match winterfell::verify::<VdfAir>(proof, pub_inputs) {
+    match winterfell::verify::<FibAir>(proof, pub_inputs) {
         Ok(_) => println!(
             "Proof verified in {:.1} ms",
             now.elapsed().as_micros() as f64 / 1000f64
         ),
         Err(msg) => println!("Something went wrong! {}", msg),
     }
-}
-
-// VDF FUNCTION
-// ================================================================================================
-
-fn vdf(seed: Felt, n: usize) -> Felt {
-    let mut state = seed;
-    for _ in 0..(n - 1) {
-        state = (state - FORTY_TWO).exp(INV_ALPHA);
-    }
-    state
 }
 
 // PUBLIC INPUTS
@@ -100,93 +86,132 @@ impl Serializable for VdfInputs {
     }
 }
 
-// VDF AIR
+// Fibonacci AIR
 // ================================================================================================
 
-struct VdfAir {
+pub struct FibAir {
     context: AirContext<Felt>,
-    seed: Felt,
     result: Felt,
 }
 
-impl Air for VdfAir {
+impl Air for FibAir {
     type BaseField = Felt;
-    type PublicInputs = VdfInputs;
+    type PublicInputs = Felt;
 
-    fn new(trace_info: TraceInfo, pub_inputs: VdfInputs, options: ProofOptions) -> Self {
-        let degrees = vec![TransitionConstraintDegree::new(3)];
-        Self {
+    // CONSTRUCTOR
+    // --------------------------------------------------------------------------------------------
+    fn new(trace_info: TraceInfo, pub_inputs: Self::BaseField, options: ProofOptions) -> Self {
+        let degrees = vec![
+            TransitionConstraintDegree::new(1),
+            TransitionConstraintDegree::new(1),
+        ];
+        assert_eq!(TRACE_WIDTH, trace_info.width());
+        FibAir {
             context: AirContext::new(trace_info, degrees, options),
-            seed: pub_inputs.seed,
-            result: pub_inputs.result,
+            result: pub_inputs,
         }
     }
 
-    fn evaluate_transition<E: FieldElement<BaseField = Self::BaseField>>(
+    fn context(&self) -> &AirContext<Self::BaseField> {
+        &self.context
+    }
+
+    fn evaluate_transition<E: FieldElement<BaseField = Self::BaseField> + From<Self::BaseField>>(
         &self,
         frame: &EvaluationFrame<E>,
         _periodic_values: &[E],
         result: &mut [E],
     ) {
-        let current_state = frame.current()[0];
-        let next_state = frame.next()[0];
+        let current = frame.current();
+        let next = frame.next();
+        // expected state width is 2 field elements
+        debug_assert_eq!(TRACE_WIDTH, current.len());
+        debug_assert_eq!(TRACE_WIDTH, next.len());
 
-        result[0] = current_state - (next_state.exp(ALPHA.into()) + FORTY_TWO.into());
+        // constraints of Fibonacci sequence (2 terms per step):
+        // s_{0, i+1} = s_{0, i} + s_{1, i}
+        // s_{1, i+1} = s_{1, i} + s_{0, i+1}
+        result[0] = next[0] - (current[0] + current[1]);
+        result[1] = next[1] - (current[1] + next[0]);
     }
 
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
+        // a valid Fibonacci sequence should start with two ones and terminate with
+        // the expected result
         let last_step = self.trace_length() - 1;
         vec![
-            Assertion::single(0, 0, self.seed),
-            Assertion::single(0, last_step, self.result),
+            Assertion::single(0, 0, Self::BaseField::ONE),
+            Assertion::single(1, 0, Self::BaseField::ONE),
+            Assertion::single(1, last_step, self.result),
         ]
-    }
-
-    fn context(&self) -> &AirContext<Self::BaseField> {
-        &self.context
     }
 }
 
 // PROVER
 // ================================================================================================
 
-struct VdfProver {
+// FIBONACCI PROVER
+// ================================================================================================
+
+pub struct FibProver {
     options: ProofOptions,
 }
 
-impl VdfProver {
+impl FibProver {
     pub fn new(options: ProofOptions) -> Self {
         Self { options }
     }
 
-    pub fn build_trace(seed: Felt, n: usize) -> TraceTable<Felt> {
-        let mut trace = Vec::with_capacity(n);
-        let mut state = seed;
+    /// Builds an execution trace for computing a Fibonacci sequence of the specified length such
+    /// that each row advances the sequence by 2 terms.
+    pub fn build_trace(&self, sequence_length: usize) -> TraceTable<Felt> {
+        assert!(
+            sequence_length.is_power_of_two(),
+            "sequence length must be a power of 2"
+        );
 
-        trace.push(state);
-        for _ in 0..(n - 1) {
-            state = (state - FORTY_TWO).exp(INV_ALPHA);
-            trace.push(state);
-        }
+        let mut trace = TraceTable::new(TRACE_WIDTH, sequence_length / 2);
+        trace.fill(
+            |state| {
+                state[0] = Felt::ONE;
+                state[1] = Felt::ONE;
+            },
+            |_, state| {
+                state[0] += state[1];
+                state[1] += state[0];
+            },
+        );
 
-        TraceTable::init(vec![trace])
+        trace
     }
 }
 
-impl Prover for VdfProver {
+impl Prover for FibProver {
     type BaseField = Felt;
-    type Air = VdfAir;
+    type Air = FibAir;
     type Trace = TraceTable<Felt>;
 
-    fn get_pub_inputs(&self, trace: &Self::Trace) -> VdfInputs {
+    fn get_pub_inputs(&self, trace: &Self::Trace) -> Felt {
         let last_step = trace.length() - 1;
-        VdfInputs {
-            seed: trace.get(0, 0),
-            result: trace.get(0, last_step),
-        }
+        trace.get(1, last_step)
     }
 
     fn options(&self) -> &ProofOptions {
         &self.options
     }
+}
+
+/// HELPERS
+
+/// Computes the nth term of the fibonacci sequence.
+pub fn compute_fib_term(n: usize) -> Felt {
+    let mut t0 = Felt::ONE;
+    let mut t1 = Felt::ONE;
+
+    for _ in 0..(n - 1) {
+        t1 = t0 + t1;
+        core::mem::swap(&mut t0, &mut t1);
+    }
+
+    t1
 }

@@ -1,10 +1,10 @@
 [package]
-name = "vdf"
+name = "fibonacci"
 version = "0.1.0"
 edition = "2018"
 
 [[bin]]
-name = "vdf"
+name = "fibonacci"
 path = "src/main.rs"
 
 [dependencies]
